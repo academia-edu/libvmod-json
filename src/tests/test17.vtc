@@ -1,0 +1,23 @@
+varnishtest "Test bool insertion"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.bool(".foo", true);
+		set resp.http.json = json.to_json("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.json == "{\"foo\": true}"
+}
+
+client c1 -run

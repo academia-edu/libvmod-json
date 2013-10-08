@@ -1,0 +1,40 @@
+varnishtest "Verify variables are request-local by default"
+
+server s1 {
+	rxreq
+	txresp
+
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_recv {
+		if( req.url == "/client/1" ) {
+			json.integer(".clients[<]", 1);
+		} else {
+			json.integer(".clients[<]", 2);
+		}
+	}
+
+	sub vcl_deliver {
+		set resp.http.json = json.to_json("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/client/1"
+	rxresp
+	expect resp.http.json == "{\"clients\": [1]}"
+}
+
+client c2 {
+	txreq -url "/client/2"
+	rxresp
+	expect resp.http.json == "{\"clients\": [2]}"
+}
+
+client c1 -run
+client c2 -run

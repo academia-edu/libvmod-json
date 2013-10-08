@@ -1,0 +1,25 @@
+varnishtest "Test real insertion"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.real(".foo", 3.14);
+						  
+		set resp.http.json = json.to_json("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	# I don't pretend to understand IEEE floating point, so I don't know if this is a problem.
+	expect resp.http.json == "{\"foo\": 3.1400000000000001}"
+}
+
+client c1 -run

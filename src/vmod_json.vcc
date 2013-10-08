@@ -1,0 +1,22 @@
+Module json
+Init vmod_json_init
+
+Function VOID global(PRIV_VCL)
+Function VOID local(PRIV_VCL)
+
+Function VOID string(PRIV_VCL, STRING, STRING)
+Function VOID integer(PRIV_VCL, STRING, INT)
+Function VOID real(PRIV_VCL, STRING, REAL)
+Function VOID bool(PRIV_VCL, STRING, BOOL)
+Function VOID null(PRIV_VCL, STRING)
+
+Function VOID remove(PRIV_VCL, STRING)
+Function VOID clear(PRIV_VCL)
+
+Function BOOL did_error(PRIV_VCL)
+Function STRING error_message(PRIV_VCL)
+Function STRING error_domain(PRIV_VCL)
+Function INT error_code(PRIV_VCL)
+Function VOID error_clear(PRIV_VCL)
+
+Function STRING to_json(PRIV_VCL, STRING)

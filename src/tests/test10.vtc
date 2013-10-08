@@ -1,0 +1,23 @@
+varnishtest "Test nested indexed array insert"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.integer(".foo[4][3]", 1337);
+		set resp.http.json = json.to_json("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.json == "{\"foo\": [null, null, null, null, [null, null, null, 1337]]}"
+}
+
+client c1 -run
