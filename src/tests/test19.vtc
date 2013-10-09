@@ -1,0 +1,44 @@
+varnishtest "Test examples from README"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.integer(".foo", 1337);
+		set resp.http.example1 = json.to_json("");
+		json.clear();
+
+		json.integer(".foo.bar", 1337);
+		set resp.http.example2 = json.to_json("");
+		json.clear();
+
+		json.integer(".foo[1]", 1337);
+		set resp.http.example3 = json.to_json("");
+		json.clear();
+
+		json.integer(".foo[<][1]", 1337);
+		set resp.http.example4 = json.to_json("");
+		json.clear();
+
+		json.integer(".foo[<][1].baz.foobaz[3]", 1337);
+		set resp.http.example5 = json.to_json("");
+		json.clear();
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.example1 == "{\"foo\": 1337}"
+	expect resp.http.example2 == "{\"foo\": {\"bar\": 1337}}"
+	expect resp.http.example3 == "{\"foo\": [null, 1337]}"
+	expect resp.http.example4 == "{\"foo\": [[null, 1337]]}"
+	expect resp.http.example5 == "{\"foo\": [[null, {\"baz\": {\"foobaz\": [null, null, null, 1337]}}]]}"
+}
+
+client c1 -run
