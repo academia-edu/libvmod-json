@@ -1,0 +1,30 @@
+varnishtest "Test error generation and handling"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.null(".");
+		if( json.did_error() ) {
+			set resp.http.error_message = json.error_message();
+			set resp.http.error_domain = json.error_domain();
+			set resp.http.error_code = json.error_code();
+			json.error_clear();
+		}
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.error_message == "No identifier specified"
+	expect resp.http.error_domain == "vmod-json-error-quark"
+	expect resp.http.error_code == 1
+}
+
+client c1 -run

@@ -57,12 +57,9 @@ static JsonLocalState *get_local_state( struct sess *, struct vmod_priv * );
 #define VMOD_JSON_ERROR vmod_json_error_quark()
 
 typedef enum {
-	VMOD_JSON_ERR_NO_CLOSING_BRACKET,
-	VMOD_JSON_ERR_INTERIOR_ARRAY_PREPEND_APPEND,
-	VMOD_JSON_ERR_NUMBER_CONVERSION,
-	VMOD_JSON_ERR_INVALID_CHARACTERS,
-	VMOD_JSON_ERR_OUT_OF_BOUNDS,
-	VMOD_JSON_ERR_NOT_FOUND
+	VMOD_JSON_ERR_NONE = 0,
+	VMOD_JSON_ERR_SYNTAX,
+	VMOD_JSON_ERR_INVALID_ARGUMENTS
 } VmodJsonErrorCode;
 
 static GQuark vmod_json_error_quark() {
@@ -309,9 +306,7 @@ static bool key_path_parse_object_op( const char *key_path, KeyPathOp *out, cons
 	dbgprintf("key_path_parse_object_op: *endptr = '%s', i = %zu, *endptr + i = '%s'\n", *endptr, i, *endptr + i);
 
 	if( i == 0 ) {
-		// ERROR: No identifier specified
-		(void) error;
-		g_assert_not_reached();
+		g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "No identifier specified");
 		return false;
 	}
 
@@ -329,9 +324,8 @@ static bool key_path_parse_array_append_or_prepend_op( const char *array_index_b
 
 	g_assert(array_index_buf_len != 0);
 	if( array_index_buf_len != 1 ) {
-		(void) error;
-		// ERROR: Invalid array operator
-		g_assert_not_reached();
+		g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Invalid array operator");
+		return false;
 	}
 
 	switch( *array_index_buf ) {
@@ -342,8 +336,8 @@ static bool key_path_parse_array_append_or_prepend_op( const char *array_index_b
 			out->type = KEY_PATH_OP_ARRAY_APPEND;
 			break;
 		default:
-			// ERROR: Invalid array operator
-			g_assert_not_reached();
+			g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Invalid array operator");
+			return false;
 	}
 
 #ifndef NDEBUG
@@ -367,12 +361,12 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	uintmax_t array_index = strtoumax(array_index_buf, &array_index_endptr, 0);
 	if( errno != 0 ) {
 		char errbuf[1024];
-		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_NUMBER_CONVERSION, "Error converting array index to number: %s", vmod_strerror_r(errno, errbuf, 1024));
+		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Error converting array index to number: %s", vmod_strerror_r(errno, errbuf, 1024));
 		return false;
 	}
 	g_assert(array_index_endptr != NULL);
 	if( array_index_endptr != array_index_buf + array_index_buf_len ) {
-		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_INVALID_CHARACTERS, "Invalid characters found in array index: '%s'", array_index_endptr);
+		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Invalid characters found in array index: '%s'", array_index_endptr);
 		return false;
 	}
 
@@ -384,8 +378,8 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 #endif
 
 	if( array_index > SIZE_MAX ) {
-		// ERROR: Array index out of bounds
-		g_assert_not_reached();
+		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Array index %ju too big", array_index);
+		return false;
 	}
 
 	out->type = KEY_PATH_OP_ARRAY_INDEX;
@@ -403,8 +397,8 @@ static bool key_path_parse_array_op( const char *key_path, KeyPathOp *out, const
 	size_t array_index_len = 0;
 	for( array_index_len = 0; key_path[array_index_len] != ']'; array_index_len++ ) {
 		if( key_path[array_index_len] == '\0' ) {
-			// ERROR: No closing bracket in array index
-			g_assert_not_reached();
+			g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "No closing bracket in array index");
+			return false;
 		}
 	}
 
@@ -419,8 +413,8 @@ static bool key_path_parse_array_op( const char *key_path, KeyPathOp *out, const
 			out->value_type = KEY_PATH_VALUE_LEAF;
 			break;
 		default:
-			// ERROR: Value type invalid
-			g_assert_not_reached();
+			g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Value type '%c' invalid", key_path[array_index_len + 1]);
+			return false;
 	}
 
 	bool success = false;
@@ -446,15 +440,15 @@ static bool key_path_parse_op( const char *key_path, KeyPathOp *out, const char 
 		case '.':
 			*endptr += 1;
 			return key_path_parse_object_op(key_path + 1, out, endptr, error);
-			break;
 		case '[':
 			*endptr += 1;
 			return key_path_parse_array_op(key_path + 1, out, endptr, error);
-			break;
 		default:
-			// ERROR: No operation specified
-			g_assert_not_reached();
+			g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "No operation specified");
+			return false;
 	}
+
+	g_assert_not_reached();
 }
 
 typedef struct {
@@ -502,18 +496,23 @@ static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser 
 			default:
 				dbgprintf("key_path_parse: ptr = %p, endptr = %p\n", ptr, endptr);
 				dbgprintf("key_path_parse: *ptr = 0x%02x, ptr = '%s'\n", *ptr, ptr);
-				// ERROR: No operation specified
-				g_assert_not_reached();
+				g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "No operation specified");
+				return false;
 		}
+
+#ifndef NDEBUG
 		char *top_str = json_dumps(top, JSON_ENCODE_ANY);
 		dbgprintf("key_path_parse: iterate, top = '%s'\n", top_str);
 		free(top_str);
+#endif
 	}
 	traverser->func(cur, NULL, traverser->payload, error);
 	return true;
 }
 
 static json_t *key_path_create_or_return_value( KeyPathOp *op, json_t *value, GError **error ) {
+	(void) error;
+
 	if( value != NULL ) {
 		json_incref(value);
 		return value;
@@ -530,10 +529,6 @@ static json_t *key_path_create_or_return_value( KeyPathOp *op, json_t *value, GE
 			dbgprintf("key_path_create_or_return_value: json_object()\n");
 			ret = json_object();
 			break;
-		case KEY_PATH_VALUE_LEAF:
-			(void) error;
-			// ERROR: Value not found
-			g_assert_not_reached();
 		default:
 			g_assert_not_reached();
 	}
@@ -558,10 +553,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 			if( value != NULL && !json_equal(ret, value) ) ret = NULL;
 			if( ret == NULL ) {
 				json_t *o = key_path_create_or_return_value(op, value, error);
-				if( o == NULL ) {
-					// TODO: Handle this error
-					g_assert_not_reached();
-				}
+				if( o == NULL ) return NULL;
 #ifndef NDEBUG
 				char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *o_str = json_dumps(o, JSON_ENCODE_ANY);
 				dbgprintf("key_path_get_and_insert_or_create: json_object_set('%s', '%s', '%s')\n", cur_str, key, o_str);
@@ -596,10 +588,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 			}
 			if( ret == NULL ) {
 				json_t *o = key_path_create_or_return_value(op, value, error);
-				if( o == NULL ) {
-					// TODO: Handle this error
-					g_assert_not_reached();
-				}
+				if( o == NULL ) return NULL;
 #ifndef NDEBUG
 				{
 					char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *o_str = json_dumps(o, JSON_ENCODE_ANY);
@@ -632,10 +621,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 
 			dbgprintf("key_path_get_and_insert_or_create: json_array_append(cur, value)\n");
 			json_t *o = key_path_create_or_return_value(op, value, error);
-			if( o == NULL ) {
-				// TODO: Handle this error
-				g_assert_not_reached();
-			}
+			if( o == NULL ) return NULL;
 			int code = json_array_append(cur, o);
 			g_assert(code == 0);
 			json_decref(o);
@@ -647,10 +633,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 
 			dbgprintf("key_path_get_and_insert_or_create: json_array_insert(cur, 0, value)\n");
 			json_t *o = key_path_create_or_return_value(op, value, error);
-			if( o == NULL ) {
-				// TODO: Handle this error
-				g_assert_not_reached();
-			}
+			if( o == NULL ) return NULL;
 			int code = json_array_insert(cur, 0, o);
 			g_assert(code == 0);
 			json_decref(o);
@@ -669,9 +652,11 @@ static json_t *key_path_getter_traverser( json_t *cur, KeyPathOp *op, json_t **o
 	g_assert(out != NULL);
 	g_assert(cur != NULL);
 
+#ifndef NDEBUG
 	char *cur_str = json_dumps(cur, JSON_ENCODE_ANY);
 	dbgprintf("key_path_getter_traverser: cur = '%s'\n", cur_str);
 	free(cur_str);
+#endif
 
 	if( op == NULL ) {
 		*out = cur;
@@ -699,9 +684,11 @@ static json_t *key_path_get( json_t *top, const char *key, GError **error ) {
 static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *value, GError **error ) {
 	g_assert(cur != NULL);
 
+#ifndef NDEBUG
 	char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY);
 	dbgprintf("key_path_setter_traverser: cur = '%s', value = '%s'\n", cur_str, value_str);
 	free(cur_str), free(value_str);
+#endif
 
 	if( op == NULL ) {
 		g_assert(json_equal(cur, value));
@@ -712,19 +699,13 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 	switch( op->value_type ) {
 		case KEY_PATH_VALUE_LEAF:
 			ret = key_path_get_and_insert_or_create(cur, op, value, error);
-			if( ret == NULL ) {
-				// TODO: Handle error
-				g_assert_not_reached();
-			}
+			if( ret == NULL ) return NULL;
 			g_assert(json_equal(value, ret));
 			break;
 		case KEY_PATH_VALUE_OBJECT:
 		case KEY_PATH_VALUE_ARRAY:
 			ret = key_path_get_and_insert_or_create(cur, op, NULL, error);
-			if( ret == NULL ) {
-				// TODO: Handle error
-				g_assert_not_reached();
-			}
+			if( ret == NULL ) return NULL;
 			break;
 		default:
 			g_assert_not_reached();
@@ -771,7 +752,7 @@ void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, co
 	GError *error = NULL;
 
 	json_t *json_value = json_string(value);
-	g_assert(json_value != NULL); // TODO: Runtime error
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -790,7 +771,7 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 	GError *error = NULL;
 
 	json_t *json_value = json_integer(value);
-	g_assert(json_value != NULL); // TODO: Runtime error
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -804,6 +785,7 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 		return;
 	}
 
+#ifndef NDEBUG
 	char *json_value_str = json_dumps(json_value, JSON_ENCODE_ANY);
 	dbgprintf("vmod_integer: json_value = '%s', success = %s, error = '%s'\n", json_value_str, success ? "true" : "false", success ? "(null)" : error->message);
 	free(json_value_str);
@@ -811,13 +793,14 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 	char *js_json_str = json_dumps(js->json, JSON_ENCODE_ANY);
 	dbgprintf("vmod_integer: js->json = '%s'\n", js_json_str);
 	free(js_json_str);
+#endif
 }
 
 void vmod_real(struct sess *sp, struct vmod_priv *global, const char *key, double value) {
 	GError *error = NULL;
 
 	json_t *json_value = json_real(value);
-	g_assert(json_value != NULL); // TODO: Runtime error
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -836,7 +819,7 @@ void vmod_bool(struct sess *sp, struct vmod_priv *global, const char *key, unsig
 	GError *error = NULL;
 
 	json_t *json_value = json_boolean(value);
-	g_assert(json_value != NULL); // TODO: Runtime error
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -855,7 +838,7 @@ void vmod_null(struct sess *sp, struct vmod_priv *global, const char *key) {
 	GError *error = NULL;
 
 	json_t *json_value = json_null();
-	g_assert(json_value != NULL); // TODO: Runtime error
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -890,23 +873,28 @@ unsigned vmod_did_error( struct sess *sp, struct vmod_priv *global ) {
 }
 
 const char *vmod_error_message( struct sess *sp, struct vmod_priv *global ) {
-	// TODO: Verify that an error has occurred.
-	return WS_Dup(sp->wrk->ws, get_local_state(sp, global)->error->message);
+	JsonLocalState *jls = get_local_state(sp, global);
+	const char *message = jls->error == NULL ? "Invalid argument" : jls->error->message;
+	return WS_Dup(sp->wrk->ws, message);
 }
 
 const char *vmod_error_domain( struct sess *sp, struct vmod_priv *global ) {
-	// TODO: Verify that an error has occurred.
-	return WS_Dup(sp->wrk->ws, g_quark_to_string(get_local_state(sp, global)->error->domain));
+	JsonLocalState *jls = get_local_state(sp, global);
+	const char *message = jls->error == NULL ? "Invalid argument" : g_quark_to_string(jls->error->domain);
+	return WS_Dup(sp->wrk->ws, message);
 }
 
 int vmod_error_code( struct sess *sp, struct vmod_priv *global ) {
-	// TODO: Verify that an error has occurred.
-	return get_local_state(sp, global)->error->code;
+	JsonLocalState *jls = get_local_state(sp, global);
+	return jls->error == NULL ? -1 : jls->error->code;
 }
 
 void vmod_error_clear( struct sess *sp, struct vmod_priv *global ) {
-	// TODO: Verify that an error has occurred.
-	g_error_free(get_local_state(sp, global)->error);
+	JsonLocalState *jls = get_local_state(sp, global);
+	if( jls->error != NULL ) {
+		g_error_free(jls->error);
+		jls->error = NULL;
+	}
 }
 
 const char *vmod_to_json( struct sess *sp, struct vmod_priv *global, const char *key ) {
