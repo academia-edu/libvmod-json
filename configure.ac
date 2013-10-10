@@ -47,6 +47,14 @@ AC_ARG_WITH(
 	[AC_MSG_ERROR([No Varnish source tree specified])]
 )
 AC_SUBST([VARNISHSRC])
+
+AC_MSG_CHECKING([that we are compiling against varnish 3])
+PKG_CONFIG_PATH="$VARNISHSRC" pkg-config --exists 'varnishapi >= 3 varnishapi < 4'
+if test $? -ne 0; then
+	AC_MSG_ERROR([libvmod-json must be compiled against varnish 3])
+fi
+AC_MSG_RESULT([yes])
+
 AC_CHECK_FILE([$VARNISHSRC/include/varnishapi.h],
 	[],
 	[AC_MSG_FAILURE(["$VARNISHSRC" is not a Varnish source directory])]
