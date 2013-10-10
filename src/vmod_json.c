@@ -7,7 +7,9 @@
 #include <inttypes.h>
 #include <errno.h>
 
+#ifndef NDEBUG
 #include <stdio.h>
+#endif
 
 #include <jansson.h>
 #include <glib.h>
