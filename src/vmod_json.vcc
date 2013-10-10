@@ -9,6 +9,8 @@ Function VOID integer(PRIV_VCL, STRING, INT)
 Function VOID real(PRIV_VCL, STRING, REAL)
 Function VOID bool(PRIV_VCL, STRING, BOOL)
 Function VOID null(PRIV_VCL, STRING)
+Function VOID object(PRIV_VCL, STRING)
+Function VOID array(PRIV_VCL, STRING)
 
 Function VOID remove(PRIV_VCL, STRING)
 Function VOID clear(PRIV_VCL)

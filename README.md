@@ -58,6 +58,8 @@ Currently, libvmod-json only supports generating json strings. It can in the
 future support parsing json strings, at which point it would also be a superset
 of the functionality of [libvmod-var][libvmod-var]
 
+The way local variables are implemented will need to be rewritten for varnish 4
+
 [varnish]: https://www.varnish-cache.org/
 [vcl]: https://www.varnish-cache.org/docs/3.0/reference/vcl.html
 [vmod_json_vcc]: https://github.com/academia-edu/libvmod-json/blob/master/src/vmod_json.vcc

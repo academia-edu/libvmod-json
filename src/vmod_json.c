@@ -33,7 +33,6 @@ typedef struct {
 	JsonState parent;
 	GRecMutex lock;
 	GHashTable *locals;
-	GHashTable *locals_keys_by_session;
 	uint64_t magic;
 #define JSON_MAGIC 0xa782945645a92452LL
 } JsonGlobalState;
@@ -41,14 +40,11 @@ typedef struct {
 typedef struct {
 	JsonState parent;
 	GError *error;
-	int sess_id;
+	unsigned xid;
 	bool global : 1;
 } JsonLocalState;
 
 // -- prototypes
-
-static gint64 *sess_to_locals_key( struct sess * );
-static void locals_key_free( gint64 * );
 
 static JsonLocalState *get_local_state( struct sess *, struct vmod_priv * );
 
@@ -95,7 +91,6 @@ static void free_json_local( JsonLocalState *jls ) {
 
 static void free_json_global( JsonGlobalState *jgs ) {
 	g_assert(jgs->magic == JSON_MAGIC);
-	g_hash_table_unref(jgs->locals_keys_by_session);
 	g_hash_table_unref(jgs->locals);
 	g_rec_mutex_clear(&jgs->lock);
 #ifndef NDEBUG
@@ -128,13 +123,13 @@ static void init_json_state( JsonState *js ) {
 	js->type = JSON_STATE_UNSPEC;
 }
 
-static void init_json_local_state( JsonLocalState *jls, int sess_id ) {
+static void init_json_local_state( JsonLocalState *jls, struct sess *sp ) {
 	dbgprintf("init_json_local_state\n");
 	init_json_state((JsonState *) jls);
 	((JsonState *) jls)->type = JSON_STATE_LOCAL;
 	jls->global = false;
 	jls->error = NULL;
-	jls->sess_id = sess_id;
+	jls->xid = sp->xid;
 }
 
 static void init_json_global_state( JsonGlobalState *jgs ) {
@@ -143,12 +138,11 @@ static void init_json_global_state( JsonGlobalState *jgs ) {
 	((JsonState *) jgs)->type = JSON_STATE_GLOBAL;
 	jgs->magic = JSON_MAGIC;
 	jgs->locals = g_hash_table_new_full(
-		g_int64_hash,
-		g_int64_equal,
-		(GDestroyNotify) locals_key_free,
+		g_direct_hash,
+		g_direct_equal,
+		NULL,
 		(GDestroyNotify) free_json_state
 	);
-	jgs->locals_keys_by_session = g_hash_table_new(g_direct_hash, g_direct_equal);
 	g_rec_mutex_init(&jgs->lock);
 }
 
@@ -158,9 +152,9 @@ static JsonGlobalState *new_json_global_state() {
 	return jgs;
 }
 
-static JsonLocalState *new_json_local_state( int sess_id ) {
+static JsonLocalState *new_json_local_state( struct sess *sp ) {
 	JsonLocalState *jls = g_slice_new(JsonLocalState);
-	init_json_local_state(jls, sess_id);
+	init_json_local_state(jls, sp);
 	return jls;
 }
 
@@ -194,34 +188,33 @@ static void return_global_state( JsonGlobalState *jgs ) {
 	g_rec_mutex_unlock(&jgs->lock);
 }
 
-// I'm really frustrated at the varnish people for making request local scope so hard.
+/*
+ * This will become easier in varnish 4.x
+ *
+ * From Varnish IRC
+ *
+ * 11:51 @Mithrandir> libvmod-var will have to be redone for 4.0, since that (sp->id) identifier isn't reused there.
+ * 11:51 @Mithrandir> but I haven't had the time to do that yet.
+ * 11:51  eatnumber1> which identifier, xid or fd?
+ * 11:51 @Mithrandir> fd
+ * 11:51 @Mithrandir> the nice thing about them being reused is you effectively bound the memory usage pretty easily.
+ * 11:52  eatnumber1> it'd be nice if varnish core had facilities to hook into request setup / teardown
+ * 11:52  eatnumber1> ala a PRIV_REQ argument to vmod functions
+ * 11:52 @Mithrandir> it's been discussed and will happen either for 4.0 or 4.x
+ */
 static JsonLocalState *get_local_state( struct sess *sp, struct vmod_priv *global ) {
-	dbgprintf("get_local_state: sp->id = %d, sp->xid = %d, sp->esi_level = %u\n", sp->id, sp->xid, sp->esi_level);
+	dbgprintf("get_local_state: sp->id = %d, sp->xid = %d\n", sp->id, sp->xid);
 
 	JsonGlobalState *jgs = borrow_global_state(global);
 
-	gint64 *jls_key = sess_to_locals_key(sp);
-	gint64 *jls_old_key = g_hash_table_lookup(jgs->locals_keys_by_session, GINT_TO_POINTER(sp->id));
-
-	dbgprintf("get_local_state: jls_key = %" PRId64 ", jls_old_key = %" PRId64 "\n", *jls_key, jls_old_key == NULL ? 0 : *jls_old_key);
-	if( jls_old_key != NULL && *jls_key != *jls_old_key ) {
-		dbgprintf("get_local_state: clearing old locals with key %" PRId64 "\n", *jls_old_key);
-		bool success;
-		success = g_hash_table_remove(jgs->locals_keys_by_session, GINT_TO_POINTER(sp->id));
-		g_assert(success);
-		success = g_hash_table_remove(jgs->locals, jls_old_key);
-		g_assert(success);
-		jls_old_key = NULL;
-	}
-
+	gpointer *jls_key = GINT_TO_POINTER(sp->id);
 	JsonLocalState *jls = g_hash_table_lookup(jgs->locals, jls_key);
 
+	if( jls != NULL && sp->xid != jls->xid ) jls = NULL;
+
 	if( jls == NULL ) {
-		jls = new_json_local_state(sp->id);
+		jls = new_json_local_state(sp);
 		g_hash_table_replace(jgs->locals, jls_key, jls);
-		g_hash_table_insert(jgs->locals_keys_by_session, GINT_TO_POINTER(sp->id), jls_key);
-	} else {
-		locals_key_free(jls_key);
 	}
 	g_assert(jls != NULL);
 
@@ -256,7 +249,7 @@ static void return_current_state( JsonState *js ) {
 // -- key path traversal
 
 typedef enum {
-	KEY_PATH_OP_UNSPEC,
+	KEY_PATH_OP_UNSPEC = 0,
 	KEY_PATH_OP_OBJECT_ACCESS,
 	KEY_PATH_OP_ARRAY_PREPEND,
 	KEY_PATH_OP_ARRAY_APPEND,
@@ -264,7 +257,7 @@ typedef enum {
 } KeyPathOpType;
 
 typedef enum {
-	KEY_PATH_VALUE_UNSPEC,
+	KEY_PATH_VALUE_UNSPEC = 0,
 	KEY_PATH_VALUE_OBJECT,
 	KEY_PATH_VALUE_ARRAY,
 	KEY_PATH_VALUE_LEAF
@@ -459,6 +452,8 @@ typedef struct {
 static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser *traverser, GError **error ) {
 	dbgprintf("key_path_parse: key_path = '%s'\n", key_path);
 
+	GError *err = NULL;
+
 	const char *ptr = key_path, *endptr = key_path + strlen(key_path);
 	json_t *cur = top;
 	while( ptr < endptr ) {
@@ -489,8 +484,11 @@ static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser 
 				}
 				dbgprintf("};\n");
 #endif
-				cur = traverser->func(cur, &op, traverser->payload, error);
-				if( cur == NULL ) return false;
+				cur = traverser->func(cur, &op, traverser->payload, &err);
+				if( err != NULL ) {
+					g_propagate_error(error, err);
+					return false;
+				}
 				break;
 			}
 			default:
@@ -506,7 +504,11 @@ static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser 
 		free(top_str);
 #endif
 	}
-	traverser->func(cur, NULL, traverser->payload, error);
+	traverser->func(cur, NULL, traverser->payload, &err);
+	if( err != NULL ) {
+		g_propagate_error(error, err);
+		return false;
+	}
 	return true;
 }
 
@@ -660,7 +662,7 @@ static json_t *key_path_getter_traverser( json_t *cur, KeyPathOp *op, json_t **o
 
 	if( op == NULL ) {
 		*out = cur;
-		return *out;
+		return NULL;
 	}
 
 	return key_path_get_and_insert_or_create(cur, op, NULL, error);
@@ -692,7 +694,7 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 
 	if( op == NULL ) {
 		g_assert(json_equal(cur, value));
-		return cur;
+		return NULL;
 	}
 
 	json_t *ret = NULL;
@@ -722,18 +724,83 @@ static bool key_path_insert( json_t *top, const char *key, json_t *value, GError
 	return key_path_parse(key, top, &traverser, error);
 }
 
-// -- misc util functions
+typedef struct {
+	KeyPathOp prev_op;
+	json_t *prev_json;
+} KeyPathRemoverTraverserArgs;
 
-static void locals_key_free( gint64 *ptr ) {
-	g_slice_free(gint64, ptr);
+static json_t *key_path_remover_traverser( json_t *cur, KeyPathOp *op, KeyPathRemoverTraverserArgs *args, GError **error ) {
+	g_assert(cur != NULL);
+	g_assert(args != NULL);
+
+	if( op == NULL ) {
+		if( args->prev_op.type == KEY_PATH_OP_UNSPEC ) {
+			// ERROR: Removing non-existant key
+			g_assert_not_reached();
+		}
+
+		switch( args->prev_op.type ) {
+			case KEY_PATH_OP_OBJECT_ACCESS: {
+				g_assert(json_is_object(args->prev_json));
+				// Need to copy the key since it's not null terminated in the op
+				char key[args->prev_op.value.key.buflen + 1];
+				memcpy(key, args->prev_op.value.key.buf, args->prev_op.value.key.buflen);
+				key[args->prev_op.value.key.buflen] = '\0';
+
+				int ret = json_object_del(args->prev_json, key);
+				g_assert(ret == 0);
+				break;
+			}
+			case KEY_PATH_OP_ARRAY_INDEX: {
+				g_assert(json_is_array(args->prev_json));
+				int ret = json_array_remove(args->prev_json, args->prev_op.value.index);
+				g_assert(ret == 0);
+				break;
+			}
+			case KEY_PATH_OP_ARRAY_APPEND: {
+				g_assert(json_is_array(args->prev_json));
+				size_t size = json_array_size(args->prev_json);
+				if( size == 0 ) {
+					// ERROR: Removing from zero sized array
+					g_assert_not_reached();
+				}
+				int ret = json_array_remove(args->prev_json, size - 1);
+				g_assert(ret == 0);
+				break;
+			}
+			case KEY_PATH_OP_ARRAY_PREPEND: {
+				g_assert(json_is_array(args->prev_json));
+				size_t size = json_array_size(args->prev_json);
+				if( size == 0 ) {
+					// ERROR: Removing from zero sized array
+					g_assert_not_reached();
+				}
+				int ret = json_array_remove(args->prev_json, 0);
+				g_assert(ret == 0);
+				break;
+			}
+			default:
+				g_assert_not_reached();
+		}
+
+		return NULL;
+	}
+
+	args->prev_op = *op;
+	if( args->prev_json != NULL ) json_decref(args->prev_json);
+	args->prev_json = json_incref(cur);
+
+	return key_path_get_and_insert_or_create(cur, op, NULL, error);
 }
 
-static gint64 *sess_to_locals_key( struct sess *sp ) {
-	G_STATIC_ASSERT(sizeof(sp->xid <= 4) && sizeof(sp->esi_level <= 4));
-	gint64 *hsh = g_slice_new(gint64);
-	*hsh = (((uint64_t) sp->esi_level) << 32) | sp->xid;
-	dbgprintf("sess_to_locals_key: sp->xid = 0x%02x, sp->esi_level = 0x%02x, hsh = 0x%02" PRIx64 "\n", sp->xid, sp->esi_level, *hsh);
-	return hsh;
+static bool key_path_remove( json_t *top, const char *key, GError **error ) {
+	KeyPathRemoverTraverserArgs args;
+	memset(&args, 0, sizeof(args));
+	KeyPathTraverser traverser = {
+		.func = (__typeof__(traverser.func)) key_path_remover_traverser,
+		.payload = (void *) &args
+	};
+	return key_path_parse(key, top, &traverser, error);
 }
 
 // -- actual vmod functions
@@ -796,7 +863,7 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 #endif
 }
 
-void vmod_real(struct sess *sp, struct vmod_priv *global, const char *key, double value) {
+void vmod_real( struct sess *sp, struct vmod_priv *global, const char *key, double value ) {
 	GError *error = NULL;
 
 	json_t *json_value = json_real(value);
@@ -815,7 +882,7 @@ void vmod_real(struct sess *sp, struct vmod_priv *global, const char *key, doubl
 	}
 }
 
-void vmod_bool(struct sess *sp, struct vmod_priv *global, const char *key, unsigned value) {
+void vmod_bool( struct sess *sp, struct vmod_priv *global, const char *key, unsigned value ) {
 	GError *error = NULL;
 
 	json_t *json_value = json_boolean(value);
@@ -834,7 +901,7 @@ void vmod_bool(struct sess *sp, struct vmod_priv *global, const char *key, unsig
 	}
 }
 
-void vmod_null(struct sess *sp, struct vmod_priv *global, const char *key) {
+void vmod_null( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
 
 	json_t *json_value = json_null();
@@ -853,10 +920,56 @@ void vmod_null(struct sess *sp, struct vmod_priv *global, const char *key) {
 	}
 }
 
-void vmod_remove(struct sess *ign25, struct vmod_priv *ign26, const char *ign28) {
-	(void) ign28, (void) ign26, (void) ign25;
-	// TODO
-	g_assert_not_reached();
+void vmod_object( struct sess *sp, struct vmod_priv *global, const char *key ) {
+	GError *error = NULL;
+
+	json_t *json_value = json_object();
+	g_assert(json_value != NULL);
+
+	JsonState *js = borrow_current_state(sp, global);
+	bool success = key_path_insert(js->json, key, json_value, &error);
+	return_current_state(js);
+
+	json_decref(json_value);
+
+	if( !success ) {
+		g_assert(error != NULL);
+		vmod_json_set_gerror(sp, global, error);
+		return;
+	}
+}
+
+void vmod_array( struct sess *sp, struct vmod_priv *global, const char *key ) {
+	GError *error = NULL;
+
+	json_t *json_value = json_array();
+	g_assert(json_value != NULL);
+
+	JsonState *js = borrow_current_state(sp, global);
+	bool success = key_path_insert(js->json, key, json_value, &error);
+	return_current_state(js);
+
+	json_decref(json_value);
+
+	if( !success ) {
+		g_assert(error != NULL);
+		vmod_json_set_gerror(sp, global, error);
+		return;
+	}
+}
+
+void vmod_remove( struct sess *sp, struct vmod_priv *global, const char *key ) {
+	GError *error = NULL;
+
+	JsonState *js = borrow_current_state(sp, global);
+	bool success = key_path_remove(js->json, key, &error);
+	return_current_state(js);
+
+	if( !success ) {
+		g_assert(error != NULL);
+		vmod_json_set_gerror(sp, global, error);
+		return;
+	}
 }
 
 // I don't recommend calling this in the global scope due to threading issues.

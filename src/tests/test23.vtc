@@ -1,0 +1,26 @@
+varnishtest "Test removal"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.integer(".foo", 1337);
+		set resp.http.json_1 = json.to_json("");
+		json.remove(".foo");
+		set resp.http.json_2 = json.to_json("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.json_1 == "{\"foo\": 1337}"
+	expect resp.http.json_2 == "{}"
+}
+
+client c1 -run
