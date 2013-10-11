@@ -64,18 +64,6 @@ static GQuark vmod_json_error_quark() {
 	return g_quark_from_static_string("vmod-json-error-quark");
 }
 
-static char *vmod_strerror_r( int errnum, char *buf, size_t buflen ) {
-	int saved_errno = errno;
-	errno = 0;
-	if( strerror_r(errnum, buf, buflen) == -1 ) {
-		const char *msg = "Error calling strerror_r";
-		memcpy(buf, msg, MIN(strlen(msg), buflen));
-		buf[buflen - 1] = '\0';
-	}
-	errno = saved_errno;
-	return buf;
-}
-
 static void vmod_json_set_gerror( struct sess *sp, struct vmod_priv *global, GError *error ) {
 	g_assert(error != NULL);
 	g_propagate_error(&get_local_state(sp, global)->error, error);
@@ -174,21 +162,8 @@ int vmod_json_init( struct vmod_priv *global, const struct VCL_conf *conf ) {
 	return 0;
 }
 
-// -- borrow functions
-
-static JsonGlobalState *borrow_global_state( struct vmod_priv *global ) {
-	JsonGlobalState *jgs = (JsonGlobalState *) global->priv;
-	g_assert(jgs->magic == JSON_MAGIC);
-	g_assert(((JsonState *) jgs)->type == JSON_STATE_GLOBAL);
-
-	g_rec_mutex_lock(&jgs->lock);
-	return jgs;
-}
-
-static void return_global_state( JsonGlobalState *jgs ) {
-	g_assert(jgs->magic == JSON_MAGIC);
-	g_rec_mutex_unlock(&jgs->lock);
-}
+static JsonGlobalState *borrow_global_state( struct vmod_priv * );
+static void return_global_state( JsonGlobalState * );
 
 /*
  * This will become easier in varnish 4.x
@@ -223,6 +198,22 @@ static JsonLocalState *get_local_state( struct sess *sp, struct vmod_priv *globa
 	return_global_state(jgs);
 
 	return jls;
+}
+
+// -- borrow functions
+
+static JsonGlobalState *borrow_global_state( struct vmod_priv *global ) {
+	JsonGlobalState *jgs = (JsonGlobalState *) global->priv;
+	g_assert(jgs->magic == JSON_MAGIC);
+	g_assert(((JsonState *) jgs)->type == JSON_STATE_GLOBAL);
+
+	g_rec_mutex_lock(&jgs->lock);
+	return jgs;
+}
+
+static void return_global_state( JsonGlobalState *jgs ) {
+	g_assert(jgs->magic == JSON_MAGIC);
+	g_rec_mutex_unlock(&jgs->lock);
 }
 
 static JsonState *borrow_current_state( struct sess *sp, struct vmod_priv *global ) {
@@ -355,8 +346,7 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	errno = 0;
 	uintmax_t array_index = strtoumax(array_index_buf, &array_index_endptr, 0);
 	if( errno != 0 ) {
-		char errbuf[1024];
-		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Error converting array index to number: %s", vmod_strerror_r(errno, errbuf, 1024));
+		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Error converting array index to number: %s", g_strerror(errno));
 		return false;
 	}
 	g_assert(array_index_endptr != NULL);
