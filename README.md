@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/academia-edu/libvmod-json.png?branch=master)](https://travis-ci.org/academia-edu/libvmod-json)
+
 # Introduction
 
 libvmod-json is a [varnish][varnish] [vcl][vcl] module for creating JSON strings
