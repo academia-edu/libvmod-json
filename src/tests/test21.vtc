@@ -10,7 +10,7 @@ varnish v1 -vcl+backend {
 
 	sub vcl_deliver {
 		json.object(".foo");
-		set resp.http.json = json.to_json("");
+		set resp.http.json = json.dump("");
 	}
 } -start
 

@@ -10,23 +10,23 @@ varnish v1 -vcl+backend {
 
 	sub vcl_deliver {
 		json.integer(".foo", 1337);
-		set resp.http.example1 = json.to_json("");
+		set resp.http.example1 = json.dump("");
 		json.clear();
 
 		json.integer(".foo.bar", 1337);
-		set resp.http.example2 = json.to_json("");
+		set resp.http.example2 = json.dump("");
 		json.clear();
 
 		json.integer(".foo[1]", 1337);
-		set resp.http.example3 = json.to_json("");
+		set resp.http.example3 = json.dump("");
 		json.clear();
 
 		json.integer(".foo[<][1]", 1337);
-		set resp.http.example4 = json.to_json("");
+		set resp.http.example4 = json.dump("");
 		json.clear();
 
 		json.integer(".foo[<][1].baz.foobaz[3]", 1337);
-		set resp.http.example5 = json.to_json("");
+		set resp.http.example5 = json.dump("");
 		json.clear();
 	}
 } -start

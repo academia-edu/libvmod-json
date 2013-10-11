@@ -1006,7 +1006,7 @@ void vmod_error_clear( struct sess *sp, struct vmod_priv *global ) {
 	}
 }
 
-const char *vmod_to_json( struct sess *sp, struct vmod_priv *global, const char *key ) {
+const char *vmod_dump( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
 
 	JsonState *js = borrow_current_state(sp, global);

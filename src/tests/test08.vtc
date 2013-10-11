@@ -11,7 +11,7 @@ varnish v1 -vcl+backend {
 	sub vcl_deliver {
 		json.integer(".foo[<]", 1337);
 		json.integer(".foo[<]", 1338);
-		set resp.http.json = json.to_json("");
+		set resp.http.json = json.dump("");
 	}
 } -start
 

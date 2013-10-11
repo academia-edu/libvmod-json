@@ -21,4 +21,4 @@ Function STRING error_domain(PRIV_VCL)
 Function INT error_code(PRIV_VCL)
 Function VOID error_clear(PRIV_VCL)
 
-Function STRING to_json(PRIV_VCL, STRING)
+Function STRING dump(PRIV_VCL, STRING)

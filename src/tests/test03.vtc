@@ -1,4 +1,4 @@
-varnishtest "Test nested object to_json"
+varnishtest "Test nested object dump"
 
 server s1 {
 	rxreq
@@ -10,7 +10,7 @@ varnish v1 -vcl+backend {
 
 	sub vcl_deliver {
 		json.integer(".foo.bar", 1337);
-		set resp.http.json = json.to_json(".foo");
+		set resp.http.json = json.dump(".foo");
 	}
 } -start
 
