@@ -10,7 +10,7 @@ before_script:
   - make
   - cd ..
   - ./autogen.sh
-  - ./configure --with-varnish=varnish* VMODDIR=`pwd`
+  - cd varnish*; varnishdir="$PWD"; cd ..; ./configure --with-varnish="$varnishdir" VMODDIR=`pwd`
   - make
 
 script:
