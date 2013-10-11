@@ -1,7 +1,7 @@
 language: c
 
 before_install:
- - sudo apt-get install -qq python-docutils
+ - sudo apt-get install -qq python-docutils libjansson-dev libglib2.0-dev
 
 before_script:
   - apt-get source -q varnish
@@ -10,7 +10,7 @@ before_script:
   - make
   - cd ..
   - ./autogen.sh
-  - ./configure VARNISHSRC=varnish* VMODDIR=`pwd`
+  - ./configure --with-varnish=varnish* VMODDIR=`pwd`
   - make
 
 script:
