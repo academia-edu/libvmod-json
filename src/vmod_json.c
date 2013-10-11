@@ -19,6 +19,10 @@
 
 #include "vcc_if.h"
 
+#if JANSSON_MAJOR_VERSION <= 2 && JANSSON_MINOR_VERSION < 4
+#define json_boolean(val) ((val) ? json_true() : json_false())
+#endif
+
 // TODO: Figure out how to do logging properly here
 #define dbgprintf(...)
 
