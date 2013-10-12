@@ -7,7 +7,7 @@ libvmod-json is a [varnish][varnish] [vcl][vcl] module for creating JSON strings
 # Usage
 
 libvmod-json makes available a series of functions used to create a json
-structure stored internally, and a `to_json` function to convert that internal
+structure stored internally, and a `dump` function to convert that internal
 structore to a string.
 
 ## Key Paths
