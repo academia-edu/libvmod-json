@@ -35,6 +35,8 @@ are of the following form:
 For array access operations, arrays automatically grow to their indexed size and
 are filled with `null`.
 
+Negative indexes are allowed, and access from the end of the array.
+
 ### Example Key Paths and Their Equivalent JSON
 
 * `.foo`: `{"foo": ...}`

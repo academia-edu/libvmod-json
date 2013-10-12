@@ -24,6 +24,7 @@
 #endif
 
 // TODO: Figure out how to do logging properly here
+//#define dbgprintf(...) fprintf(stderr, __VA_ARGS__)
 #define dbgprintf(...)
 
 typedef struct {
@@ -40,7 +41,7 @@ typedef struct {
 	GRecMutex lock;
 	GHashTable *locals;
 	uint64_t magic;
-#define JSON_MAGIC 0xa782945645a92452LL
+#define JSON_MAGIC 0xa782945645a92452ULL
 } JsonGlobalState;
 
 typedef struct {
@@ -70,6 +71,7 @@ static GQuark vmod_json_error_quark() {
 
 static void vmod_json_set_gerror( struct sess *sp, struct vmod_priv *global, GError *error ) {
 	g_assert(error != NULL);
+	dbgprintf("vmod_json_set_gerror: error->message = '%s'\n", error->message);
 	g_propagate_error(&get_local_state(sp, global)->error, error);
 }
 
@@ -264,7 +266,7 @@ typedef struct {
 	KeyPathOpType type;
 	KeyPathValueType value_type;
 	union {
-		size_t index;
+		intmax_t index;
 		struct {
 			const char *buf;
 			size_t buflen;
@@ -348,7 +350,7 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	// Convert the num string into an intmax
 	char *array_index_endptr = NULL;
 	errno = 0;
-	uintmax_t array_index = strtoumax(array_index_buf, &array_index_endptr, 0);
+	intmax_t array_index = strtoimax(array_index_buf, &array_index_endptr, 0);
 	if( errno != 0 ) {
 		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Error converting array index to number: %s", g_strerror(errno));
 		return false;
@@ -359,6 +361,16 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 		return false;
 	}
 
+	// This is an annoyingly phrased check to see if
+	// array_index >= -SIZE_MAX && array_index <= SIZE_MAX.
+	if(
+		(array_index < 0 && (uintmax_t) -(array_index + 1) > SIZE_MAX - 1) ||
+		(uintmax_t) array_index > SIZE_MAX
+	) {
+		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Array index %jd out of bounds", array_index);
+		return false;
+	}
+
 #ifndef NDEBUG
 	char array_index_vla[array_index_buf_len + 1];
 	memcpy(array_index_vla, array_index_buf, array_index_buf_len);
@@ -366,13 +378,8 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	dbgprintf("key_path_parse_array_index_op: array_index_buf = '%s', array_index = %jd\n", array_index_vla, array_index);
 #endif
 
-	if( array_index > SIZE_MAX ) {
-		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Array index %ju too big", array_index);
-		return false;
-	}
-
 	out->type = KEY_PATH_OP_ARRAY_INDEX;
-	out->value.index = (size_t) array_index;
+	out->value.index = array_index;
 	return true;
 }
 
@@ -568,7 +575,19 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 		case KEY_PATH_OP_ARRAY_INDEX:
 			g_assert(json_is_array(cur));
 
-			size_t array_size = json_array_size(cur), array_index = op->value.index;
+			size_t array_size = json_array_size(cur);
+			size_t array_index = SIZE_MAX; // This should fail if we fuck up later
+			{
+				intmax_t index = op->value.index;
+				dbgprintf("key_path_get_and_insert_or_create: array_size = %zd, index = %jd\n", array_size, index);
+				if( index < 0 ) index += array_size;
+				if( index < 0 ) {
+					g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX, "Array index %jd out of bounds", index);
+					return NULL;
+				}
+				array_index = (size_t) index;
+			}
+			dbgprintf("key_path_get_and_insert_or_create: array_index = %zd\n", array_index);
 			if( array_size <= array_index ) {
 				for( size_t i = array_size; i <= array_index; i++ ) {
 					json_t *nul = json_null();
@@ -577,7 +596,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 				}
 			}
 
-			ret = json_array_get(cur, op->value.index);
+			ret = json_array_get(cur, array_index);
 			if(
 				(value != NULL && !json_equal(ret, value)) ||
 				(json_is_null(ret) && op->value_type != KEY_PATH_VALUE_LEAF)
@@ -594,7 +613,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 					free(cur_str), free(o_str);
 				}
 #endif
-				int code = json_array_set(cur, op->value.index, o);
+				int code = json_array_set(cur, array_index, o);
 				g_assert(code == 0);
 #ifndef NDEBUG
 				{
@@ -683,9 +702,11 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 	g_assert(cur != NULL);
 
 #ifndef NDEBUG
-	char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY);
-	dbgprintf("key_path_setter_traverser: cur = '%s', value = '%s'\n", cur_str, value_str);
-	free(cur_str), free(value_str);
+	{
+		char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY);
+		dbgprintf("key_path_setter_traverser: cur = '%s', value = '%s'\n", cur_str, value_str);
+		free(cur_str), free(value_str);
+	}
 #endif
 
 	if( op == NULL ) {
@@ -709,6 +730,15 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 			g_assert_not_reached();
 	}
 	g_assert(ret != NULL);
+
+#ifndef NDEBUG
+	{
+		char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY), *ret_str = json_dumps(ret, JSON_ENCODE_ANY);
+		dbgprintf("key_path_setter_traverser: cur = '%s', ret = '%s', value = '%s'\n", cur_str, ret_str, value_str);
+		free(cur_str), free(value_str), free(ret_str);
+	}
+#endif
+
 	return ret;
 }
 
@@ -1022,6 +1052,9 @@ const char *vmod_dump( struct sess *sp, struct vmod_priv *global, const char *ke
 	json_decref(json);
 	char *ret = WS_Dup(sp->wrk->ws, json_str);
 	free(json_str);
+
+	dbgprintf("vmod_dump: ret = '%s'", ret);
+
 	// TODO: Error on NULL
 	return ret;
 }

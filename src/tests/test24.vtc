@@ -1,0 +1,25 @@
+varnishtest "Test negative array access"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.integer(".foo[<]", 1);
+		json.integer(".foo[<]", 2);
+		json.integer(".foo[-1]", 3);
+		set resp.http.json = json.dump("");
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.json == "{\"foo\": [1, 3]}"
+}
+
+client c1 -run
