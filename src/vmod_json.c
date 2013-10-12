@@ -844,6 +844,11 @@ void vmod_local( struct sess *sp, struct vmod_priv *global ) {
 void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, const char *value ) {
 	GError *error = NULL;
 
+	if( value == NULL ) {
+		vmod_null(sp, global, key);
+		return;
+	}
+
 	json_t *json_value = json_string(value);
 	g_assert(json_value != NULL);
 
@@ -1053,7 +1058,7 @@ const char *vmod_dump( struct sess *sp, struct vmod_priv *global, const char *ke
 	char *ret = WS_Dup(sp->wrk->ws, json_str);
 	free(json_str);
 
-	dbgprintf("vmod_dump: ret = '%s'", ret);
+	dbgprintf("vmod_dump: ret = '%s'\n", ret);
 
 	// TODO: Error on NULL
 	return ret;
