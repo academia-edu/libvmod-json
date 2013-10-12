@@ -1,0 +1,84 @@
+varnishtest "Test various error conditions"
+
+server s1 {
+	rxreq
+	txresp
+} -start
+
+varnish v1 -vcl+backend {
+	import json from "${vmod_topbuild}/src/.libs/libvmod_json.so";
+
+	sub vcl_deliver {
+		json.remove(".foo");
+		set resp.http.error_domain = json.error_domain();
+		set resp.http.error_1_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".", 1);
+		set resp.http.error_2_code = json.error_code();
+		json.error_clear();
+
+		json.remove(".foo[<]");
+		set resp.http.error_3_code = json.error_code();
+		json.error_clear();
+
+		json.remove(".foo[>]");
+		set resp.http.error_4_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[<1]", 1);
+		set resp.http.error_5_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[<", 1);
+		set resp.http.error_6_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[18446744073709551616]", 1);
+		set resp.http.error_7_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[1a]", 1);
+		set resp.http.error_8_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[-9223372036854775808]", 1);
+		set resp.http.error_9_code = json.error_code();
+		json.error_clear();
+
+		json.integer(".foo[0]x", 1);
+		set resp.http.error_10_code = json.error_code();
+		json.error_clear();
+
+		json.integer("", 1);
+		set resp.http.error_11_code = json.error_code();
+		json.error_clear();
+
+		json.integer("a", 1);
+		set resp.http.error_12_code = json.error_code();
+		json.error_clear();
+
+		set resp.http.error_13_code = json.error_code();
+	}
+} -start
+
+client c1 {
+	txreq -url "/"
+	rxresp
+	expect resp.http.error_domain == "vmod-json-error-quark"
+	expect resp.http.error_1_code == 2
+	expect resp.http.error_2_code == 4
+	expect resp.http.error_3_code == 2
+	expect resp.http.error_4_code == 2
+	expect resp.http.error_5_code == 5
+	expect resp.http.error_6_code == 6
+	expect resp.http.error_7_code == 5
+	expect resp.http.error_8_code == 5
+	expect resp.http.error_9_code == 5
+	expect resp.http.error_10_code == 7
+	expect resp.http.error_11_code == 9
+	expect resp.http.error_12_code == 8
+	expect resp.http.error_13_code == 0
+}
+
+client c1 -run

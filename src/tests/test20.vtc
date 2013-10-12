@@ -24,7 +24,7 @@ client c1 {
 	rxresp
 	expect resp.http.error_message == "No identifier specified"
 	expect resp.http.error_domain == "vmod-json-error-quark"
-	expect resp.http.error_code == 1
+	expect resp.http.error_code == 4
 }
 
 client c1 -run
