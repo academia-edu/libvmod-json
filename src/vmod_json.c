@@ -6,6 +6,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <errno.h>
+#include <syslog.h>
 
 #ifndef NDEBUG
 #include <stdio.h>
@@ -23,9 +24,12 @@
 #define json_boolean(val) ((val) ? json_true() : json_false())
 #endif
 
-// TODO: Figure out how to do logging properly here
-//#define dbgprintf(...) fprintf(stderr, __VA_ARGS__)
+//#define dbgprintf(...) syslog(LOG_DEBUG, __VA_ARGS__)
 #define dbgprintf(...)
+
+#ifndef LOG_PERROR
+#define LOG_PERROR 0
+#endif
 
 typedef struct {
 	json_t *json;
@@ -161,17 +165,24 @@ static JsonLocalState *new_json_local_state( struct sess *sp ) {
 	return jls;
 }
 
-static void init_vmod_priv( struct vmod_priv *p, JsonState *js ) {
-	g_assert(p->priv == NULL);
-	p->priv = js;
-	p->free = (vmod_priv_free_f *) free_json_state;
+void vmod_json_free( JsonState *jgs ) {
+	closelog();
+	free_json_state(jgs);
 }
 
 int vmod_json_init( struct vmod_priv *global, const struct VCL_conf *conf ) {
 	(void) conf;
 	dbgprintf("vmod_json_init\n");
-	memset(global, 0, sizeof(*global));
-	init_vmod_priv(global, (JsonState *) new_json_global_state());
+
+	int options = 0;
+#ifndef NDEBUG
+	options |= LOG_PERROR;
+#endif
+	openlog("libvmod-json", options, LOG_USER | LOG_INFO);
+
+	global->priv = new_json_global_state();
+	global->free = (vmod_priv_free_f *) vmod_json_free;
+
 	return 0;
 }
 
@@ -372,7 +383,7 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	// array_index >= -SIZE_MAX && array_index <= SIZE_MAX.
 	if(
 		(array_index < 0 && (uintmax_t) -(array_index + 1) > SIZE_MAX - 1) ||
-		(uintmax_t) array_index > SIZE_MAX
+		(array_index >= 0 && (uintmax_t) array_index > SIZE_MAX)
 	) {
 		g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX_BAD_ARRAY_INDEX, "Array index %jd out of bounds", array_index);
 		return false;
@@ -870,7 +881,10 @@ void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, co
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_string(value);
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_string returned NULL for string '%s'\n", value);
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -922,7 +936,10 @@ void vmod_real( struct sess *sp, struct vmod_priv *global, const char *key, doub
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_real(value);
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_real returned NULL for double %f\n", value);
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -943,7 +960,10 @@ void vmod_bool( struct sess *sp, struct vmod_priv *global, const char *key, unsi
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_boolean(value);
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_boolean returned NULL for %u\n", value);
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -964,7 +984,10 @@ void vmod_null( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_null();
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_null returned NULL\n");
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -985,7 +1008,10 @@ void vmod_object( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_object();
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_object returned NULL\n");
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -1006,7 +1032,10 @@ void vmod_array( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_array();
-	g_assert(json_value != NULL);
+	if( json_value == NULL ) {
+		syslog(LOG_WARNING, "json_array returned NULL\n");
+		return;
+	}
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
