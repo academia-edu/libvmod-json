@@ -845,12 +845,18 @@ static bool key_path_remove( json_t *top, const char *key, GError **error ) {
 
 void vmod_global( struct sess *sp, struct vmod_priv *global ) {
 	dbgprintf("vmod_global\n");
-	get_local_state(sp, global)->global = true;
+	JsonLocalState *jls = get_local_state(sp, global);
+	if( jls->error != NULL ) return;
+
+	jls->global = true;
 }
 
 void vmod_local( struct sess *sp, struct vmod_priv *global ) {
 	dbgprintf("vmod_local\n");
-	get_local_state(sp, global)->global = false;
+	JsonLocalState *jls = get_local_state(sp, global);
+	if( jls->error != NULL ) return;
+
+	jls->global = false;
 }
 
 void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, const char *value ) {
@@ -860,6 +866,8 @@ void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, co
 		vmod_null(sp, global, key);
 		return;
 	}
+
+	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_string(value);
 	g_assert(json_value != NULL);
@@ -879,6 +887,8 @@ void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, co
 
 void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, int value ) {
 	GError *error = NULL;
+
+	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_integer(value);
 	g_assert(json_value != NULL);
@@ -909,6 +919,8 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 void vmod_real( struct sess *sp, struct vmod_priv *global, const char *key, double value ) {
 	GError *error = NULL;
 
+	if( get_local_state(sp, global)->error != NULL ) return;
+
 	json_t *json_value = json_real(value);
 	g_assert(json_value != NULL);
 
@@ -927,6 +939,8 @@ void vmod_real( struct sess *sp, struct vmod_priv *global, const char *key, doub
 
 void vmod_bool( struct sess *sp, struct vmod_priv *global, const char *key, unsigned value ) {
 	GError *error = NULL;
+
+	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_boolean(value);
 	g_assert(json_value != NULL);
@@ -947,6 +961,8 @@ void vmod_bool( struct sess *sp, struct vmod_priv *global, const char *key, unsi
 void vmod_null( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
 
+	if( get_local_state(sp, global)->error != NULL ) return;
+
 	json_t *json_value = json_null();
 	g_assert(json_value != NULL);
 
@@ -965,6 +981,8 @@ void vmod_null( struct sess *sp, struct vmod_priv *global, const char *key ) {
 
 void vmod_object( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
+
+	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_object();
 	g_assert(json_value != NULL);
@@ -985,6 +1003,8 @@ void vmod_object( struct sess *sp, struct vmod_priv *global, const char *key ) {
 void vmod_array( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
 
+	if( get_local_state(sp, global)->error != NULL ) return;
+
 	json_t *json_value = json_array();
 	g_assert(json_value != NULL);
 
@@ -1004,6 +1024,8 @@ void vmod_array( struct sess *sp, struct vmod_priv *global, const char *key ) {
 void vmod_remove( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
 
+	if( get_local_state(sp, global)->error != NULL ) return;
+
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_remove(js->json, key, &error);
 	return_current_state(js);
@@ -1017,6 +1039,8 @@ void vmod_remove( struct sess *sp, struct vmod_priv *global, const char *key ) {
 
 // I don't recommend calling this in the global scope due to threading issues.
 void vmod_clear( struct sess *sp, struct vmod_priv *global ) {
+	if( get_local_state(sp, global)->error != NULL ) return;
+
 	JsonState *js = borrow_current_state(sp, global);
 	json_decref(js->json);
 	js->json = json_object();
@@ -1057,6 +1081,8 @@ void vmod_error_clear( struct sess *sp, struct vmod_priv *global ) {
 
 const char *vmod_dump( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	GError *error = NULL;
+
+	if( get_local_state(sp, global)->error != NULL ) return NULL;
 
 	JsonState *js = borrow_current_state(sp, global);
 	json_t *json = key_path_get(js->json, key, &error);

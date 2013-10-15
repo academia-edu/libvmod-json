@@ -56,6 +56,11 @@ There are two scopes for the internal json structure:
 
 For now, refer to [vmod_json.vcc][vmod_json_vcc]
 
+## Errors
+
+If an error occurrs, all calls into the json library the session wherein the
+error occurred will be ignored until `error_clear` is called.
+
 # Future Work
 
 Currently, libvmod-json only supports generating json strings. It can in the
