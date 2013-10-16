@@ -1,3 +1,5 @@
+#include <config.h>
+
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -6,11 +8,6 @@
 #include <string.h>
 #include <inttypes.h>
 #include <errno.h>
-#include <syslog.h>
-
-#ifndef NDEBUG
-#include <stdio.h>
-#endif
 
 #include <jansson.h>
 #include <glib.h>
@@ -24,11 +21,11 @@
 #define json_boolean(val) ((val) ? json_true() : json_false())
 #endif
 
-//#ifndef NDEBUG
-//#define dbgprintf(...) syslog(LOG_DEBUG, __VA_ARGS__)
-//#else
-#define dbgprintf(...) ((void) 0)
-//#endif
+#ifndef NDEBUG
+#define dbgprintf(sp, ...) VSL(SLT_VCL_trace, ((sp) == NULL ? 0 : ((struct sess *) sp)->id), __VA_ARGS__)
+#else
+#define dbgprintf(sp, ...) ((void) (sp))
+#endif
 
 #ifndef LOG_PERROR
 #define LOG_PERROR 0
@@ -87,7 +84,7 @@ static GQuark vmod_json_error_quark() {
 
 static void vmod_json_set_gerror( struct sess *sp, struct vmod_priv *global, GError *error ) {
 	g_assert(error != NULL);
-	dbgprintf("vmod_json_set_gerror: error->message = '%s'\n", error->message);
+	dbgprintf(sp, "vmod_json_set_gerror: error->message = '%s'", error->message);
 	g_propagate_error(&get_local_state(sp, global)->error, error);
 }
 
@@ -128,7 +125,7 @@ static void free_json_state( JsonState *js ) {
 }
 
 static void init_json_state( JsonState *js ) {
-	dbgprintf("init_json_state\n");
+	dbgprintf(0, "init_json_state");
 	g_assert(js != NULL);
 	js->json = json_object();
 	g_assert(js->json != NULL);
@@ -136,7 +133,7 @@ static void init_json_state( JsonState *js ) {
 }
 
 static void init_json_local_state( JsonLocalState *jls, struct sess *sp ) {
-	dbgprintf("init_json_local_state\n");
+	dbgprintf(sp, "init_json_local_state");
 	init_json_state((JsonState *) jls);
 	((JsonState *) jls)->type = JSON_STATE_LOCAL;
 	jls->global = false;
@@ -145,7 +142,7 @@ static void init_json_local_state( JsonLocalState *jls, struct sess *sp ) {
 }
 
 static void init_json_global_state( JsonGlobalState *jgs ) {
-	dbgprintf("init_json_global_state\n");
+	dbgprintf(0, "init_json_global_state");
 	init_json_state((JsonState *) jgs);
 	((JsonState *) jgs)->type = JSON_STATE_GLOBAL;
 	jgs->magic = JSON_MAGIC;
@@ -170,26 +167,12 @@ static JsonLocalState *new_json_local_state( struct sess *sp ) {
 	return jls;
 }
 
-void vmod_json_free( JsonState *jgs ) {
-	closelog();
-	free_json_state(jgs);
-}
-
 int vmod_json_init( struct vmod_priv *global, const struct VCL_conf *conf ) {
 	(void) conf;
-	dbgprintf("vmod_json_init\n");
-
-	int options = 0;
-#ifndef NDEBUG
-	options |= LOG_PERROR;
-#endif
-
-	// TODO: Shouldn't call this from a library. It could override openlog called
-	// from varnish itself.
-	openlog("libvmod-json", options, LOG_USER | LOG_INFO);
+	dbgprintf(0, "vmod_json_init");
 
 	global->priv = new_json_global_state();
-	global->free = (vmod_priv_free_f *) vmod_json_free;
+	global->free = (vmod_priv_free_f *) free_json_state;
 
 	return 0;
 }
@@ -212,7 +195,7 @@ static void return_global_state( JsonGlobalState * );
  * 11:52 @Mithrandir> it's been discussed and will happen either for 4.0 or 4.x
  */
 static JsonLocalState *get_local_state( struct sess *sp, struct vmod_priv *global ) {
-	dbgprintf("get_local_state: sp->id = %d, sp->xid = %d\n", sp->id, sp->xid);
+	dbgprintf(sp, "get_local_state: sp->id = %d, sp->xid = %d", sp->id, sp->xid);
 
 	JsonGlobalState *jgs = borrow_global_state(global);
 
@@ -251,10 +234,10 @@ static void return_global_state( JsonGlobalState *jgs ) {
 static JsonState *borrow_current_state( struct sess *sp, struct vmod_priv *global ) {
 	JsonLocalState *jls = get_local_state(sp, global);
 	if( jls->global ) {
-		dbgprintf("borrow_current_state: global\n");
+		dbgprintf(sp, "borrow_current_state: global");
 		return (JsonState *) borrow_global_state(global);
 	} else {
-		dbgprintf("borrow_current_state: local\n");
+		dbgprintf(sp, "borrow_current_state: local");
 		return (JsonState *) jls;
 	}
 }
@@ -321,7 +304,7 @@ static bool key_path_parse_object_op( const char *key_path, KeyPathOp *out, cons
 		}
 	}
 
-	dbgprintf("key_path_parse_object_op: *endptr = '%s', i = %zu, *endptr + i = '%s'\n", *endptr, i, *endptr + i);
+	dbgprintf(0, "key_path_parse_object_op: *endptr = '%s', i = %zu, *endptr + i = '%s'", *endptr, i, *endptr + i);
 
 	if( i == 0 ) {
 		g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX_NO_IDENTIFIER, "No identifier specified");
@@ -362,7 +345,7 @@ static bool key_path_parse_array_append_or_prepend_op( const char *array_index_b
 	char array_index_vla[array_index_buf_len + 1];
 	memcpy(array_index_vla, array_index_buf, array_index_buf_len);
 	array_index_vla[array_index_buf_len] = '\0';
-	dbgprintf("key_path_parse_array_append_or_prepend_op: array_index_buf = '%s'\n", array_index_vla);
+	dbgprintf(0, "key_path_parse_array_append_or_prepend_op: array_index_buf = '%s'", array_index_vla);
 #endif
 
 	return true;
@@ -371,7 +354,7 @@ static bool key_path_parse_array_append_or_prepend_op( const char *array_index_b
 static bool key_path_parse_array_index_op( const char *array_index_buf, size_t array_index_buf_len, KeyPathOp *out, GError **error ) {
 	g_assert(out != NULL);
 
-	dbgprintf("key_path_parse_array_index_op: array_index_buf = '%s', array_index_buf_len = %zd\n", array_index_buf, array_index_buf_len);
+	dbgprintf(0, "key_path_parse_array_index_op: array_index_buf = '%s', array_index_buf_len = %zd", array_index_buf, array_index_buf_len);
 
 	// Convert the num string into an intmax
 	char *array_index_endptr = NULL;
@@ -401,7 +384,7 @@ static bool key_path_parse_array_index_op( const char *array_index_buf, size_t a
 	char array_index_vla[array_index_buf_len + 1];
 	memcpy(array_index_vla, array_index_buf, array_index_buf_len);
 	array_index_vla[array_index_buf_len] = '\0';
-	dbgprintf("key_path_parse_array_index_op: array_index_buf = '%s', array_index = %jd\n", array_index_vla, array_index);
+	dbgprintf(0, "key_path_parse_array_index_op: array_index_buf = '%s', array_index = %jd", array_index_vla, array_index);
 #endif
 
 	out->type = KEY_PATH_OP_ARRAY_INDEX;
@@ -413,7 +396,7 @@ static bool key_path_parse_array_op( const char *key_path, KeyPathOp *out, const
 	g_assert(out != NULL);
 	g_assert(endptr != NULL);
 
-	dbgprintf("key_path_parse_array_op: key_path = '%s'\n", key_path);
+	dbgprintf(0, "key_path_parse_array_op: key_path = '%s'", key_path);
 
 	// Figure out the length of the array index
 	size_t array_index_len = 0;
@@ -456,7 +439,7 @@ static bool key_path_parse_array_op( const char *key_path, KeyPathOp *out, const
 }
 
 static bool key_path_parse_op( const char *key_path, KeyPathOp *out, const char **endptr, GError **error ) {
-	dbgprintf("key_path_parse_op: key_path = '%s'\n", key_path);
+	dbgprintf(0, "key_path_parse_op: key_path = '%s'", key_path);
 
 	switch( *key_path ) {
 		case '.':
@@ -479,7 +462,7 @@ typedef struct {
 } KeyPathTraverser;
 
 static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser *traverser, GError **error ) {
-	dbgprintf("key_path_parse: key_path = '%s'\n", key_path);
+	dbgprintf(0, "key_path_parse: key_path = '%s'", key_path);
 
 	GError *err = NULL;
 
@@ -492,27 +475,29 @@ static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser 
 			case '[': {
 				KeyPathOp op;
 				if( !key_path_parse_op(ptr, &op, &ptr, error) ) {
-					dbgprintf("key_path_parse: return false;\n");
+					dbgprintf(0, "key_path_parse: return false;");
 					return false;
 				}
 				g_assert(ptr <= endptr);
 #ifndef NDEBUG
-				dbgprintf("key_path_parse: op = {\n\t.type = %d\n\t.value_type = %d\n", op.type, op.value_type);
+				dbgprintf(0, "key_path_parse: op = {");
+				dbgprintf(0, "\t.type = %d", op.type);
+				dbgprintf(0, "\t.value_type = %d", op.value_type);
 				switch( op.type ) {
 					case KEY_PATH_OP_OBJECT_ACCESS: {
 						char buf[op.value.key.buflen + 1];
 						memcpy(buf, op.value.key.buf, op.value.key.buflen);
 						buf[op.value.key.buflen] = '\0';
-						dbgprintf("\t.value.key.buf = '%s'\n", buf);
+						dbgprintf(0, "\t.value.key.buf = '%s'", buf);
 						break;
 					}
 					case KEY_PATH_OP_ARRAY_INDEX:
-						dbgprintf("\t.value.index = '%jd'\n", op.value.index);
+						dbgprintf(0, "\t.value.index = '%jd'", op.value.index);
 						break;
 					default:
 						break;
 				}
-				dbgprintf("};\n");
+				dbgprintf(0, "};");
 #endif
 				cur = traverser->func(cur, &op, traverser->payload, &err);
 				if( err != NULL ) {
@@ -522,15 +507,13 @@ static bool key_path_parse( const char *key_path, json_t *top, KeyPathTraverser 
 				break;
 			}
 			default:
-				dbgprintf("key_path_parse: ptr = %p, endptr = %p\n", ptr, endptr);
-				dbgprintf("key_path_parse: *ptr = 0x%02x, ptr = '%s'\n", *ptr, ptr);
 				g_set_error_literal(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX_NO_OPERATION, "No operation specified");
 				return false;
 		}
 
 #ifndef NDEBUG
 		char *top_str = json_dumps(top, JSON_ENCODE_ANY);
-		dbgprintf("key_path_parse: iterate, top = '%s'\n", top_str);
+		dbgprintf(0, "key_path_parse: iterate, top = '%s'", top_str);
 		free(top_str);
 #endif
 	}
@@ -554,11 +537,11 @@ static json_t *key_path_create_or_return_value( KeyPathOp *op, json_t *value, GE
 
 	switch( op->value_type ) {
 		case KEY_PATH_VALUE_ARRAY:
-			dbgprintf("key_path_create_or_return_value: json_array()\n");
+			dbgprintf(0, "key_path_create_or_return_value: json_array()");
 			ret = json_array();
 			break;
 		case KEY_PATH_VALUE_OBJECT:
-			dbgprintf("key_path_create_or_return_value: json_object()\n");
+			dbgprintf(0, "key_path_create_or_return_value: json_object()");
 			ret = json_object();
 			break;
 		case KEY_PATH_VALUE_LEAF:
@@ -591,7 +574,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 				if( o == NULL ) return NULL;
 #ifndef NDEBUG
 				char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *o_str = json_dumps(o, JSON_ENCODE_ANY);
-				dbgprintf("key_path_get_and_insert_or_create: json_object_set('%s', '%s', '%s')\n", cur_str, key, o_str);
+				dbgprintf(0, "key_path_get_and_insert_or_create: json_object_set('%s', '%s', '%s')", cur_str, key, o_str);
 				free(cur_str), free(o_str);
 #endif
 				int code = json_object_set(cur, key, o);
@@ -609,7 +592,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 			size_t array_index = SIZE_MAX; // This should fail if we fuck up later
 			{
 				intmax_t index = op->value.index;
-				dbgprintf("key_path_get_and_insert_or_create: array_size = %zd, index = %jd\n", array_size, index);
+				dbgprintf(0, "key_path_get_and_insert_or_create: array_size = %zd, index = %jd", array_size, index);
 				if( index < 0 ) index += array_size;
 				if( index < 0 ) {
 					g_set_error(error, VMOD_JSON_ERROR, VMOD_JSON_ERR_SYNTAX_BAD_ARRAY_INDEX, "Array index %jd out of bounds", index);
@@ -617,7 +600,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 				}
 				array_index = (size_t) index;
 			}
-			dbgprintf("key_path_get_and_insert_or_create: array_index = %zd\n", array_index);
+			dbgprintf(0, "key_path_get_and_insert_or_create: array_index = %zd", array_index);
 			if( array_size <= array_index ) {
 				for( size_t i = array_size; i <= array_index; i++ ) {
 					json_t *nul = json_null();
@@ -639,7 +622,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 #ifndef NDEBUG
 				{
 					char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *o_str = json_dumps(o, JSON_ENCODE_ANY);
-					dbgprintf("key_path_get_and_insert_or_create: json_array_set('%s', %zd, '%s') -> ", cur_str, op->value.index, o_str);
+					dbgprintf(0, "key_path_get_and_insert_or_create: json_array_set('%s', %zd, '%s') -> ", cur_str, op->value.index, o_str);
 					free(cur_str), free(o_str);
 				}
 #endif
@@ -648,7 +631,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 #ifndef NDEBUG
 				{
 					char *cur_str = json_dumps(cur, JSON_ENCODE_ANY);
-					dbgprintf("'%s'\n", cur_str);
+					dbgprintf(0, "'%s'", cur_str);
 					free(cur_str);
 				}
 #endif
@@ -657,7 +640,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 			}
 #ifndef NDEBUG
 			char *ret_str = json_dumps(ret, JSON_ENCODE_ANY), *value_str = value == NULL ? "(null)" : json_dumps(value, JSON_ENCODE_ANY);
-			dbgprintf("key_path_get_and_insert_or_create: ret = '%s', value = '%s'\n", ret_str, value_str);
+			dbgprintf(0, "key_path_get_and_insert_or_create: ret = '%s', value = '%s'", ret_str, value_str);
 			free(ret_str);
 			if( value != NULL ) free(value_str);
 #endif
@@ -666,7 +649,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 		case KEY_PATH_OP_ARRAY_APPEND: {
 			g_assert(json_is_array(cur));
 
-			dbgprintf("key_path_get_and_insert_or_create: json_array_append(cur, value)\n");
+			dbgprintf(0, "key_path_get_and_insert_or_create: json_array_append(cur, value)");
 			json_t *o = key_path_create_or_return_value(op, value, error);
 			if( o == NULL ) return NULL;
 			int code = json_array_append(cur, o);
@@ -678,7 +661,7 @@ static json_t *key_path_get_and_insert_or_create( json_t *cur, KeyPathOp *op, js
 		case KEY_PATH_OP_ARRAY_PREPEND: {
 			g_assert(json_is_array(cur));
 
-			dbgprintf("key_path_get_and_insert_or_create: json_array_insert(cur, 0, value)\n");
+			dbgprintf(0, "key_path_get_and_insert_or_create: json_array_insert(cur, 0, value)");
 			json_t *o = key_path_create_or_return_value(op, value, error);
 			if( o == NULL ) return NULL;
 			int code = json_array_insert(cur, 0, o);
@@ -701,7 +684,7 @@ static json_t *key_path_getter_traverser( json_t *cur, KeyPathOp *op, json_t **o
 
 #ifndef NDEBUG
 	char *cur_str = json_dumps(cur, JSON_ENCODE_ANY);
-	dbgprintf("key_path_getter_traverser: cur = '%s'\n", cur_str);
+	dbgprintf(0, "key_path_getter_traverser: cur = '%s'", cur_str);
 	free(cur_str);
 #endif
 
@@ -720,7 +703,7 @@ static json_t *key_path_get( json_t *top, const char *key, GError **error ) {
 		.payload = (void *) &value
 	};
 	if( !key_path_parse(key, top, &traverser, error) ) {
-		dbgprintf("key_path_get: return NULL\n");
+		dbgprintf(0, "key_path_get: return NULL");
 		return NULL;
 	}
 	g_assert(value != NULL);
@@ -734,7 +717,7 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 #ifndef NDEBUG
 	{
 		char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY);
-		dbgprintf("key_path_setter_traverser: cur = '%s', value = '%s'\n", cur_str, value_str);
+		dbgprintf(0, "key_path_setter_traverser: cur = '%s', value = '%s'", cur_str, value_str);
 		free(cur_str), free(value_str);
 	}
 #endif
@@ -765,7 +748,7 @@ static json_t *key_path_setter_traverser( json_t *cur, KeyPathOp *op, json_t *va
 #ifndef NDEBUG
 	{
 		char *cur_str = json_dumps(cur, JSON_ENCODE_ANY), *value_str = json_dumps(value, JSON_ENCODE_ANY), *ret_str = json_dumps(ret, JSON_ENCODE_ANY);
-		dbgprintf("key_path_setter_traverser: cur = '%s', ret = '%s', value = '%s'\n", cur_str, ret_str, value_str);
+		dbgprintf(0, "key_path_setter_traverser: cur = '%s', ret = '%s', value = '%s'", cur_str, ret_str, value_str);
 		free(cur_str), free(value_str), free(ret_str);
 	}
 #endif
@@ -863,7 +846,7 @@ static bool key_path_remove( json_t *top, const char *key, GError **error ) {
 // -- actual vmod functions
 
 void vmod_global( struct sess *sp, struct vmod_priv *global ) {
-	dbgprintf("vmod_global\n");
+	dbgprintf(sp, "vmod_global");
 	JsonLocalState *jls = get_local_state(sp, global);
 	if( jls->error != NULL ) return;
 
@@ -871,7 +854,7 @@ void vmod_global( struct sess *sp, struct vmod_priv *global ) {
 }
 
 void vmod_local( struct sess *sp, struct vmod_priv *global ) {
-	dbgprintf("vmod_local\n");
+	dbgprintf(sp, "vmod_local");
 	JsonLocalState *jls = get_local_state(sp, global);
 	if( jls->error != NULL ) return;
 
@@ -932,11 +915,11 @@ void vmod_integer( struct sess *sp, struct vmod_priv *global, const char *key, i
 
 #ifndef NDEBUG
 	char *json_value_str = json_dumps(json_value, JSON_ENCODE_ANY);
-	dbgprintf("vmod_integer: json_value = '%s', success = %s, error = '%s'\n", json_value_str, success ? "true" : "false", success ? "(null)" : error->message);
+	dbgprintf(sp, "vmod_integer: json_value = '%s', success = %s, error = '%s'", json_value_str, success ? "true" : "false", success ? "(null)" : error->message);
 	free(json_value_str);
 
 	char *js_json_str = json_dumps(js->json, JSON_ENCODE_ANY);
-	dbgprintf("vmod_integer: js->json = '%s'\n", js_json_str);
+	dbgprintf(sp, "vmod_integer: js->json = '%s'", js_json_str);
 	free(js_json_str);
 #endif
 }
@@ -1092,7 +1075,7 @@ const char *vmod_error_domain( struct sess *sp, struct vmod_priv *global ) {
 int vmod_error_code( struct sess *sp, struct vmod_priv *global ) {
 	JsonLocalState *jls = get_local_state(sp, global);
 	int code = jls->error == NULL ? VMOD_JSON_ERR_NONE : jls->error->code;
-	dbgprintf("vmod_error_code: code = %d\n", code);
+	dbgprintf(sp, "vmod_error_code: code = %d", code);
 	return code;
 }
 
@@ -1124,7 +1107,7 @@ const char *vmod_dump( struct sess *sp, struct vmod_priv *global, const char *ke
 	g_assert(ret != NULL);
 	free(json_str);
 
-	dbgprintf("vmod_dump: ret = '%s'\n", ret);
+	dbgprintf(sp, "vmod_dump: ret = '%s'", ret);
 
 	return ret;
 }

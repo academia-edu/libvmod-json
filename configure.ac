@@ -34,6 +34,7 @@ PKG_PROG_PKG_CONFIG
 
 # Checks for header files.
 AC_HEADER_STDC
+AC_HEADER_ASSERT
 AC_CHECK_HEADERS([sys/stdlib.h])
 
 # Check for python
