@@ -24,8 +24,11 @@
 #define json_boolean(val) ((val) ? json_true() : json_false())
 #endif
 
+//#ifndef NDEBUG
 //#define dbgprintf(...) syslog(LOG_DEBUG, __VA_ARGS__)
-#define dbgprintf(...)
+//#else
+#define dbgprintf(...) ((void) 0)
+//#endif
 
 #ifndef LOG_PERROR
 #define LOG_PERROR 0
@@ -73,7 +76,9 @@ typedef enum {
 	VMOD_JSON_ERR_SYNTAX_ARRAY_BRACKET,
 	VMOD_JSON_ERR_SYNTAX_VALUE_INVALID,
 	VMOD_JSON_ERR_SYNTAX_NO_OPERATION,
-	VMOD_JSON_ERR_INVALID_TYPE
+	VMOD_JSON_ERR_INVALID_TYPE,
+	VMOD_JSON_ERR_JANSSON,
+	VMOD_JSON_ERR_NOT_UTF8
 } VmodJsonErrorCode;
 
 static GQuark vmod_json_error_quark() {
@@ -178,6 +183,9 @@ int vmod_json_init( struct vmod_priv *global, const struct VCL_conf *conf ) {
 #ifndef NDEBUG
 	options |= LOG_PERROR;
 #endif
+
+	// TODO: Shouldn't call this from a library. It could override openlog called
+	// from varnish itself.
 	openlog("libvmod-json", options, LOG_USER | LOG_INFO);
 
 	global->priv = new_json_global_state();
@@ -880,11 +888,14 @@ void vmod_string( struct sess *sp, struct vmod_priv *global, const char *key, co
 
 	if( get_local_state(sp, global)->error != NULL ) return;
 
-	json_t *json_value = json_string(value);
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_string returned NULL for string '%s'\n", value);
+	if( !g_utf8_validate(value, -1, NULL) ) {
+		// Can't put the bad string in here because g_set_error expects utf8 input.
+		error = g_error_new_literal(VMOD_JSON_ERROR, VMOD_JSON_ERR_NOT_UTF8, "Cannot build json using non-UTF8 string");
+		vmod_json_set_gerror(sp, global, error);
 		return;
 	}
+	json_t *json_value = json_string(value);
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -936,10 +947,7 @@ void vmod_real( struct sess *sp, struct vmod_priv *global, const char *key, doub
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_real(value);
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_real returned NULL for double %f\n", value);
-		return;
-	}
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -960,10 +968,7 @@ void vmod_bool( struct sess *sp, struct vmod_priv *global, const char *key, unsi
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_boolean(value);
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_boolean returned NULL for %u\n", value);
-		return;
-	}
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -984,10 +989,7 @@ void vmod_null( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_null();
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_null returned NULL\n");
-		return;
-	}
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -1008,10 +1010,7 @@ void vmod_object( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_object();
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_object returned NULL\n");
-		return;
-	}
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
@@ -1032,10 +1031,7 @@ void vmod_array( struct sess *sp, struct vmod_priv *global, const char *key ) {
 	if( get_local_state(sp, global)->error != NULL ) return;
 
 	json_t *json_value = json_array();
-	if( json_value == NULL ) {
-		syslog(LOG_WARNING, "json_array returned NULL\n");
-		return;
-	}
+	g_assert(json_value != NULL);
 
 	JsonState *js = borrow_current_state(sp, global);
 	bool success = key_path_insert(js->json, key, json_value, &error);
